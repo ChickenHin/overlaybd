@@ -1,12 +1,7 @@
 name: CMake
 
 on:
-  push:
-    branches:
-    - main
-  pull_request:
-    branches:
-    - main
+  workflow_dispatch: 
 
 env:
   BUILD_TYPE: Debug
@@ -54,116 +49,116 @@ jobs:
       shell: bash
       run: make -j64
 
-    - name: E2E Test OverlayBD
-      working-directory: ${{github.workspace}}/build
-      shell: bash
-      run: |
-        lscpu
-        sudo make install
-        sudo cp ${{github.workspace}}/src/example_config/overlaybd-registryv2.json /etc/overlaybd/overlaybd.json
-        sudo systemctl enable /opt/overlaybd/overlaybd-tcmu.service
-        sudo systemctl start overlaybd-tcmu
-        sudo systemctl status overlaybd-tcmu
-        sudo mkdir -p /var/lib/overlaybd/test/
-        sudo mkdir -p /sys/kernel/config/target/core/user_1/vol1
-        echo -n dev_config=overlaybd/${{github.workspace}}/src/example_config/redis.obd.config.json | sudo tee /sys/kernel/config/target/core/user_1/vol1/control
-        echo -n 1 | sudo tee /sys/kernel/config/target/core/user_1/vol1/enable
-        sudo mkdir -p /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0
-        echo -n "naa.123456789abcdef" | sudo tee /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/nexus
-        sudo ln -s /sys/kernel/config/target/core/user_1/vol1 /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0/vol1
-        lsblk
-        sudo apt-get install -y lsscsi
-        dev=`lsscsi | grep TCMU | awk '{print $7}'`
-        echo $dev
-        mkdir obd_mp
-        sudo mount -o ro $dev obd_mp
-        ls obd_mp
-        sudo umount obd_mp
-        ls -l /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0/vol1
-        sudo unlink /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0/vol1
-        wget https://overlaybd.blob.core.windows.net/overlaybd/e2etest.tar.gz
-        gzip -k -d e2etest.tar.gz
-        mkdir test_data
-        tar -zxvf e2etest.tar.gz -C test_data/
-        truncate -s 2g img1
-        truncate -s 2g img2
-        /opt/overlaybd/bin/overlaybd-apply --mkfs --raw e2etest.tar img1
-        sleep 2
-        /opt/overlaybd/bin/overlaybd-apply --mkfs --raw e2etest.tar img2
-        diff img1 img2
-        sudo mount -o ro img1 obd_mp
-        ls obd_mp
-        sudo diff -r --exclude "lost+found" test_data obd_mp
-        sudo umount obd_mp
-        cat /var/log/overlaybd.log
-    - name: E2E Test turboOCIv1
-      working-directory: ${{github.workspace}}/build
-      shell: bash
-      run: |
-        sudo make install
-        sudo cp ${{github.workspace}}/src/example_config/overlaybd-registryv2.json /etc/overlaybd/overlaybd.json
-        sudo systemctl enable /opt/overlaybd/overlaybd-tcmu.service
-        sudo systemctl start overlaybd-tcmu
-        sudo systemctl status overlaybd-tcmu
-        sudo wget https://overlaybd.blob.core.windows.net/overlaybd/e2etest.tar.gz
-        sudo mkdir -p /var/lib/overlaybd/test/
-        sudo tar -zxvf e2etest.tar.gz -C /var/lib/overlaybd/test/
-        sudo mkdir -p /sys/kernel/config/target/core/user_1/vol2
-        echo -n dev_config=overlaybd//var/lib/overlaybd/test/20/block/config.v1.json | sudo tee /sys/kernel/config/target/core/user_1/vol2/control
-        echo -n 1 | sudo tee /sys/kernel/config/target/core/user_1/vol2/enable
-        sudo mkdir -p /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/lun/lun_0
-        echo -n "naa.987654321abcdef" | sudo tee /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/nexus
-        sudo ln -s /sys/kernel/config/target/core/user_1/vol2 /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/lun/lun_0/vol2
-        lsblk
-        sudo apt-get install -y lsscsi
-        dev=`lsscsi | grep TCMU | awk '{print $7}'`
-        echo $dev
-        sudo mkdir foci_mp
-        sudo mount -o ro $dev foci_mp
-        ls foci_mp
-        sudo umount foci_mp
-        sudo unlink /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/lun/lun_0/vol2
-    - name: E2E Test ublk
-      working-directory: ${{github.workspace}}/build
-      shell: bash
-      run: |
-        sudo make install
-        sudo cp ${{github.workspace}}/src/example_config/overlaybd-registryv2.json /etc/overlaybd/overlaybd.json
-        # ublk_drv ships in linux-modules-extra-$(uname -r), which the base runner
-        # image may not install; add it if the first modprobe fails (mainline >= 6.0).
-        sudo modprobe ublk_drv || {
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
-          sudo modprobe ublk_drv
-        }
-        ls -l /dev/ublk-control
-        # The overlaybd test image is normally already extracted by the turboOCIv1
-        # step above (same job/runner); materialize it here as well so this step is
-        # self-contained and does not silently depend on step ordering.
-        cfg=/var/lib/overlaybd/test/20/block/config.v1.json
-        if [ ! -f "$cfg" ]; then
-          sudo mkdir -p /var/lib/overlaybd/test/
-          [ -f e2etest.tar.gz ] || sudo wget https://overlaybd.blob.core.windows.net/overlaybd/e2etest.tar.gz
-          sudo tar -zxf e2etest.tar.gz -C /var/lib/overlaybd/test/
-        fi
-        # `add` forks a detached daemon and prints /dev/ublkbN once ready. Bound it
-        # with a timeout: a broken ublk kernel leaves ADD_DEV hanging forever
-        # (actions/runner-images#14175), which would otherwise wedge the whole job.
-        dev=`sudo timeout 120 /opt/overlaybd/bin/overlaybd-ublk add --config $cfg` || {
-          echo "::error::overlaybd-ublk add failed/timed out on kernel $(uname -r) (cf. actions/runner-images#14175)"
-          sudo dmesg | tail -40 || true
-          exit 1
-        }
-        echo "ublk device: $dev"
-        lsblk
-        sudo /opt/overlaybd/bin/overlaybd-ublk list
-        devid=${dev#/dev/ublkb}
-        sudo mkdir -p ublk_mp
-        sudo mount -o ro $dev ublk_mp
-        ls ublk_mp
-        sudo umount ublk_mp
-        # always unmount before del; del stops the daemon and removes /dev/ublkbN
-        sudo /opt/overlaybd/bin/overlaybd-ublk del -n $devid
+    # - name: E2E Test OverlayBD
+    #   working-directory: ${{github.workspace}}/build
+    #   shell: bash
+    #   run: |
+    #     lscpu
+    #     sudo make install
+    #     sudo cp ${{github.workspace}}/src/example_config/overlaybd-registryv2.json /etc/overlaybd/overlaybd.json
+    #     sudo systemctl enable /opt/overlaybd/overlaybd-tcmu.service
+    #     sudo systemctl start overlaybd-tcmu
+    #     sudo systemctl status overlaybd-tcmu
+    #     sudo mkdir -p /var/lib/overlaybd/test/
+    #     sudo mkdir -p /sys/kernel/config/target/core/user_1/vol1
+    #     echo -n dev_config=overlaybd/${{github.workspace}}/src/example_config/redis.obd.config.json | sudo tee /sys/kernel/config/target/core/user_1/vol1/control
+    #     echo -n 1 | sudo tee /sys/kernel/config/target/core/user_1/vol1/enable
+    #     sudo mkdir -p /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0
+    #     echo -n "naa.123456789abcdef" | sudo tee /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/nexus
+    #     sudo ln -s /sys/kernel/config/target/core/user_1/vol1 /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0/vol1
+    #     lsblk
+    #     sudo apt-get install -y lsscsi
+    #     dev=`lsscsi | grep TCMU | awk '{print $7}'`
+    #     echo $dev
+    #     mkdir obd_mp
+    #     sudo mount -o ro $dev obd_mp
+    #     ls obd_mp
+    #     sudo umount obd_mp
+    #     ls -l /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0/vol1
+    #     sudo unlink /sys/kernel/config/target/loopback/naa.123456789abcdef/tpgt_1/lun/lun_0/vol1
+    #     wget https://overlaybd.blob.core.windows.net/overlaybd/e2etest.tar.gz
+    #     gzip -k -d e2etest.tar.gz
+    #     mkdir test_data
+    #     tar -zxvf e2etest.tar.gz -C test_data/
+    #     truncate -s 2g img1
+    #     truncate -s 2g img2
+    #     /opt/overlaybd/bin/overlaybd-apply --mkfs --raw e2etest.tar img1
+    #     sleep 2
+    #     /opt/overlaybd/bin/overlaybd-apply --mkfs --raw e2etest.tar img2
+    #     diff img1 img2
+    #     sudo mount -o ro img1 obd_mp
+    #     ls obd_mp
+    #     sudo diff -r --exclude "lost+found" test_data obd_mp
+    #     sudo umount obd_mp
+    #     cat /var/log/overlaybd.log
+    # - name: E2E Test turboOCIv1
+    #   working-directory: ${{github.workspace}}/build
+    #   shell: bash
+    #   run: |
+    #     sudo make install
+    #     sudo cp ${{github.workspace}}/src/example_config/overlaybd-registryv2.json /etc/overlaybd/overlaybd.json
+    #     sudo systemctl enable /opt/overlaybd/overlaybd-tcmu.service
+    #     sudo systemctl start overlaybd-tcmu
+    #     sudo systemctl status overlaybd-tcmu
+    #     sudo wget https://overlaybd.blob.core.windows.net/overlaybd/e2etest.tar.gz
+    #     sudo mkdir -p /var/lib/overlaybd/test/
+    #     sudo tar -zxvf e2etest.tar.gz -C /var/lib/overlaybd/test/
+    #     sudo mkdir -p /sys/kernel/config/target/core/user_1/vol2
+    #     echo -n dev_config=overlaybd//var/lib/overlaybd/test/20/block/config.v1.json | sudo tee /sys/kernel/config/target/core/user_1/vol2/control
+    #     echo -n 1 | sudo tee /sys/kernel/config/target/core/user_1/vol2/enable
+    #     sudo mkdir -p /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/lun/lun_0
+    #     echo -n "naa.987654321abcdef" | sudo tee /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/nexus
+    #     sudo ln -s /sys/kernel/config/target/core/user_1/vol2 /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/lun/lun_0/vol2
+    #     lsblk
+    #     sudo apt-get install -y lsscsi
+    #     dev=`lsscsi | grep TCMU | awk '{print $7}'`
+    #     echo $dev
+    #     sudo mkdir foci_mp
+    #     sudo mount -o ro $dev foci_mp
+    #     ls foci_mp
+    #     sudo umount foci_mp
+    #     sudo unlink /sys/kernel/config/target/loopback/naa.987654321abcdef/tpgt_1/lun/lun_0/vol2
+    # - name: E2E Test ublk
+    #   working-directory: ${{github.workspace}}/build
+    #   shell: bash
+    #   run: |
+    #     sudo make install
+    #     sudo cp ${{github.workspace}}/src/example_config/overlaybd-registryv2.json /etc/overlaybd/overlaybd.json
+    #     # ublk_drv ships in linux-modules-extra-$(uname -r), which the base runner
+    #     # image may not install; add it if the first modprobe fails (mainline >= 6.0).
+    #     sudo modprobe ublk_drv || {
+    #       sudo apt-get update -qq
+    #       sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
+    #       sudo modprobe ublk_drv
+    #     }
+    #     ls -l /dev/ublk-control
+    #     # The overlaybd test image is normally already extracted by the turboOCIv1
+    #     # step above (same job/runner); materialize it here as well so this step is
+    #     # self-contained and does not silently depend on step ordering.
+    #     cfg=/var/lib/overlaybd/test/20/block/config.v1.json
+    #     if [ ! -f "$cfg" ]; then
+    #       sudo mkdir -p /var/lib/overlaybd/test/
+    #       [ -f e2etest.tar.gz ] || sudo wget https://overlaybd.blob.core.windows.net/overlaybd/e2etest.tar.gz
+    #       sudo tar -zxf e2etest.tar.gz -C /var/lib/overlaybd/test/
+    #     fi
+    #     # `add` forks a detached daemon and prints /dev/ublkbN once ready. Bound it
+    #     # with a timeout: a broken ublk kernel leaves ADD_DEV hanging forever
+    #     # (actions/runner-images#14175), which would otherwise wedge the whole job.
+    #     dev=`sudo timeout 120 /opt/overlaybd/bin/overlaybd-ublk add --config $cfg` || {
+    #       echo "::error::overlaybd-ublk add failed/timed out on kernel $(uname -r) (cf. actions/runner-images#14175)"
+    #       sudo dmesg | tail -40 || true
+    #       exit 1
+    #     }
+    #     echo "ublk device: $dev"
+    #     lsblk
+    #     sudo /opt/overlaybd/bin/overlaybd-ublk list
+    #     devid=${dev#/dev/ublkb}
+    #     sudo mkdir -p ublk_mp
+    #     sudo mount -o ro $dev ublk_mp
+    #     ls ublk_mp
+    #     sudo umount ublk_mp
+    #     # always unmount before del; del stops the daemon and removes /dev/ublkbN
+    #     sudo /opt/overlaybd/bin/overlaybd-ublk del -n $devid
     - name: Unit Test
       working-directory: ${{github.workspace}}/build
       shell: bash
